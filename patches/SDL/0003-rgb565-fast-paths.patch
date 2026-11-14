@@ -1,0 +1,119 @@
+--- a/src/video/SDL_blit_N.c
++++ b/src/video/SDL_blit_N.c
+@@ -2951,6 +2951,46 @@
+ #define NO_ALPHA   1
+ #define SET_ALPHA  2
+ #define COPY_ALPHA 4
++static void Blit_RGB24_RGB565(SDL_BlitInfo *info)
++{
++    int width = info->dst_w;
++    int height = info->dst_h;
++    const Uint8 *src = info->src;
++    int srcskip = info->src_skip;
++    Uint16 *dst = (Uint16 *)info->dst;
++    int dstskip = info->dst_skip;
++
++    while (height--) {
++        int n;
++        for (n = 0; n < width; n++) {
++            *dst++ = (Uint16)(((src[0] & 0xF8) << 8) | ((src[1] & 0xFC) << 3) | (src[2] >> 3));
++            src += 3;
++        }
++        src += srcskip;
++        dst = (Uint16 *)((Uint8 *)dst + dstskip);
++    }
++}
++
++static void Blit_BGR24_RGB565(SDL_BlitInfo *info)
++{
++    int width = info->dst_w;
++    int height = info->dst_h;
++    const Uint8 *src = info->src;
++    int srcskip = info->src_skip;
++    Uint16 *dst = (Uint16 *)info->dst;
++    int dstskip = info->dst_skip;
++
++    while (height--) {
++        int n;
++        for (n = 0; n < width; n++) {
++            *dst++ = (Uint16)(((src[2] & 0xF8) << 8) | ((src[1] & 0xFC) << 3) | (src[0] >> 3));
++            src += 3;
++        }
++        src += srcskip;
++        dst = (Uint16 *)((Uint8 *)dst + dstskip);
++    }
++}
++
+ struct blit_table
+ {
+     Uint32 srcR, srcG, srcB;
+@@ -3031,6 +3071,10 @@
+       0, Blit_3or4_to_3or4__inversed_rgb, NO_ALPHA },
+     { 0x00FF0000, 0x0000FF00, 0x000000FF, 3, 0x000000FF, 0x0000FF00, 0x00FF0000,
+       0, Blit_3or4_to_3or4__inversed_rgb, NO_ALPHA },
++    { 0x000000FF, 0x0000FF00, 0x00FF0000, 2, 0x0000F800, 0x000007E0, 0x0000001F,
++      0, Blit_RGB24_RGB565, NO_ALPHA },
++    { 0x00FF0000, 0x0000FF00, 0x000000FF, 2, 0x0000F800, 0x000007E0, 0x0000001F,
++      0, Blit_BGR24_RGB565, NO_ALPHA },
+     // Default for 24-bit RGB source, never optimized
+     { 0, 0, 0, 0, 0, 0, 0, 0, BlitNtoN, 0 }
+ };
+--- a/src/video/SDL_stretch.c
++++ b/src/video/SDL_stretch.c
+@@ -943,6 +943,43 @@
+     return true;
+ }
+ 
++static void scale_2x_nearest_2(const Uint8 *src, int src_w, int src_h, int src_pitch, Uint8 *dst, int dst_pitch)
++{
++    int y;
++
++    for (y = 0; y < src_h; y++) {
++        const Uint16 *in = (const Uint16 *)(src + y * src_pitch);
++        Uint32 *top = (Uint32 *)(dst + 2 * y * dst_pitch);
++        Uint32 *bottom = (Uint32 *)((Uint8 *)top + dst_pitch);
++        int x = 0;
++
++        for (; x + 4 <= src_w; x += 4) {
++            Uint32 a = in[x];
++            Uint32 b = in[x + 1];
++            Uint32 c = in[x + 2];
++            Uint32 e = in[x + 3];
++            a |= a << 16;
++            b |= b << 16;
++            c |= c << 16;
++            e |= e << 16;
++            top[x] = a;
++            top[x + 1] = b;
++            top[x + 2] = c;
++            top[x + 3] = e;
++            bottom[x] = a;
++            bottom[x + 1] = b;
++            bottom[x + 2] = c;
++            bottom[x + 3] = e;
++        }
++        for (; x < src_w; x++) {
++            Uint32 pixel = in[x];
++            pixel |= pixel << 16;
++            top[x] = pixel;
++            bottom[x] = pixel;
++        }
++    }
++}
++
+ bool SDL_StretchSurfaceUncheckedNearest(SDL_Surface *s, const SDL_Rect *srcrect, SDL_Surface *d, const SDL_Rect *dstrect)
+ {
+     int src_w = srcrect->w;
+@@ -955,6 +992,12 @@
+ 
+     Uint32 *src = (Uint32 *)((Uint8 *)s->pixels + srcrect->x * bpp + srcrect->y * src_pitch);
+     Uint32 *dst = (Uint32 *)((Uint8 *)d->pixels + dstrect->x * bpp + dstrect->y * dst_pitch);
++
++    if (bpp == 2 && dst_w == 2 * src_w && dst_h == 2 * src_h &&
++        ((uintptr_t)dst & 3) == 0 && (dst_pitch & 3) == 0 && ((uintptr_t)src & 1) == 0 && (src_pitch & 1) == 0) {
++        scale_2x_nearest_2((const Uint8 *)src, src_w, src_h, src_pitch, (Uint8 *)dst, dst_pitch);
++        return true;
++    }
+ 
+     if (bpp == 4) {
+         return scale_mat_nearest_4(src, src_w, src_h, src_pitch, dst, dst_w, dst_h, dst_pitch);

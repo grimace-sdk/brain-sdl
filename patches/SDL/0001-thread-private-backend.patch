@@ -1,0 +1,11 @@
+--- a/src/thread/SDL_thread_c.h
++++ b/src/thread/SDL_thread_c.h
+@@ -38,6 +38,8 @@
+ #include "vita/SDL_systhread_c.h"
+ #elif defined(SDL_THREAD_N3DS)
+ #include "n3ds/SDL_systhread_c.h"
++#elif defined(SDL_THREAD_PRIVATE)
++#include "SDL_systhread_c_private.h"
+ #else
+ #error Need thread implementation for this platform
+ #include "generic/SDL_systhread_c.h"

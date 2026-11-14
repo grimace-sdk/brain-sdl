@@ -1,0 +1,19 @@
+--- a/src/render/SDL_render.c
++++ b/src/render/SDL_render.c
+@@ -1863,6 +1863,16 @@
+                 SDL_ISPIXELFORMAT_INDEXED(renderer->texture_formats[i]) == preferIndexed) {
+                 format = renderer->texture_formats[i];
+                 break;
++            }
++        }
++        if (needAlpha && !SDL_ISPIXELFORMAT_ALPHA(format)) {
++            for (i = 0; i < renderer->num_texture_formats; ++i) {
++                if (!SDL_ISPIXELFORMAT_FOURCC(renderer->texture_formats[i]) &&
++                    SDL_ISPIXELFORMAT_ALPHA(renderer->texture_formats[i]) &&
++                    !SDL_ISPIXELFORMAT_INDEXED(renderer->texture_formats[i])) {
++                    format = renderer->texture_formats[i];
++                    break;
++                }
+             }
+         }
+     }

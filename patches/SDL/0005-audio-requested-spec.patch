@@ -1,0 +1,18 @@
+--- a/src/audio/SDL_audio.c
++++ b/src/audio/SDL_audio.c
+@@ -1838,8 +1838,15 @@
+     const int minimum_freq = device->recording ? DEFAULT_AUDIO_RECORDING_FREQUENCY : DEFAULT_AUDIO_PLAYBACK_FREQUENCY;
+ 
+     device->spec.format = (SDL_AUDIO_BITSIZE(minimum_format) >= SDL_AUDIO_BITSIZE(spec.format)) ? minimum_format : spec.format;
++#ifdef SDL_AUDIO_DEVICE_USE_REQUESTED_SPEC
++    device->spec.channels = spec.channels;
++    device->spec.freq = spec.freq;
++    (void)minimum_channels;
++    (void)minimum_freq;
++#else
+     device->spec.channels = SDL_max(minimum_channels, spec.channels);
+     device->spec.freq = SDL_max(minimum_freq, spec.freq);
++#endif
+     device->sample_frames = SDL_GetDefaultSampleFramesFromFreq(device->spec.freq);
+     SDL_UpdatedAudioDeviceFormat(device);  // start this off sane.
+ 

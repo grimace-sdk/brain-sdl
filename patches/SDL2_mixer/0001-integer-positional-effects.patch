@@ -1,0 +1,47 @@
+--- a/src/effect_position.c
++++ b/src/effect_position.c
+@@ -130,6 +130,22 @@
+         len--;
+     }
+ 
++#ifdef _WIN32_WCE
++    {
++        const int left_gain = (int) (left_f * dist_f * 32768.0f);
++        const int right_gain = (int) (right_f * dist_f * 32768.0f);
++        const int first_gain = (((position_args *)udata)->room_angle == 180) ? right_gain : left_gain;
++        const int second_gain = (((position_args *)udata)->room_angle == 180) ? left_gain : right_gain;
++        for (i = 0; i < len; i += sizeof(Uint8) * 2) {
++            *ptr = (Uint8) ((Sint8) ((((int) *ptr - 128) * first_gain) >> 15) + 128);
++            ptr++;
++            *ptr = (Uint8) ((Sint8) ((((int) *ptr - 128) * second_gain) >> 15) + 128);
++            ptr++;
++        }
++        return;
++    }
++#endif
++
+     if (((position_args *)udata)->room_angle == 180) {
+       for (i = 0; i < len; i += sizeof(Uint8) * 2) {
+         /* must adjust the sample so that 0 is the center */
+@@ -795,11 +811,21 @@
+     }
+ #endif
+ 
++#ifdef _WIN32_WCE
++    const int left_gain = (int) (left_f * dist_f * 32768.0f);
++    const int right_gain = (int) (right_f * dist_f * 32768.0f);
++#endif
++
+     for (i = 0; i < len; i += sizeof(Sint16) * 2) {
++#ifdef _WIN32_WCE
++        Sint16 swapl = (Sint16) (((Sint16) SDL_SwapLE16(*(ptr+0)) * left_gain) >> 15);
++        Sint16 swapr = (Sint16) (((Sint16) SDL_SwapLE16(*(ptr+1)) * right_gain) >> 15);
++#else
+         Sint16 swapl = (Sint16) ((((float) (Sint16) SDL_SwapLE16(*(ptr+0))) *
+                                     left_f) * dist_f);
+         Sint16 swapr = (Sint16) ((((float) (Sint16) SDL_SwapLE16(*(ptr+1))) *
+                                     right_f) * dist_f);
++#endif
+         if (opp) {
+             *(ptr++) = (Sint16) SDL_SwapLE16(swapr);
+             *(ptr++) = (Sint16) SDL_SwapLE16(swapl);

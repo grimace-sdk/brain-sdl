@@ -1,0 +1,425 @@
+--- a/include/SDL2/SDL_config.h
++++ b/include/SDL2/SDL_config.h
+@@ -47,6 +47,8 @@
+ #include "SDL_config_emscripten.h"
+ #elif defined(__NGAGE__)
+ #include "SDL_config_ngage.h"
++#elif defined(_WIN32_WCE)
++#include "SDL_config_wince.h"
+ #elif defined(__unix__) || defined(__unix) || defined(unix)
+ #include "SDL_config_unix.h"
+ #else
+--- a/include/SDL2/SDL_config_wince.h
++++ b/include/SDL2/SDL_config_wince.h
+@@ -0,0 +1,24 @@
++#ifndef SDL_config_wince_h_
++#define SDL_config_wince_h_
++#define SDL_config_h_
++
++#include "SDL_platform.h"
++
++#define HAVE_LIBC 1
++#define STDC_HEADERS 1
++#define HAVE_STDIO_H 1
++#define HAVE_STDLIB_H 1
++#define HAVE_STDDEF_H 1
++#define HAVE_STDARG_H 1
++#define HAVE_STRING_H 1
++#define HAVE_WCHAR_H 1
++#define HAVE_INTTYPES_H 1
++#define HAVE_STDINT_H 1
++#define HAVE_CTYPE_H 1
++#define HAVE_MATH_H 1
++#define HAVE_FLOAT_H 1
++#define HAVE_LIMITS_H 1
++#define HAVE_ALLOCA_H 1
++#define HAVE_ALLOCA 1
++
++#endif
+--- a/include/SDL2/SDL_platform.h
++++ b/include/SDL2/SDL_platform.h
+@@ -149,7 +149,7 @@
+ #define __SOLARIS__ 1
+ #endif
+ 
+-#if defined(WIN32) || defined(_WIN32) || defined(__CYGWIN__) || defined(__MINGW32__)
++#if (defined(WIN32) || defined(_WIN32) || defined(__CYGWIN__) || defined(__MINGW32__)) && !defined(_WIN32_WCE)
+ /* Try to find out if we're compiling for WinRT, GDK or non-WinRT/GDK */
+ #if defined(_MSC_VER) && defined(__has_include)
+ #if __has_include(<winapifamily.h>)
+--- a/src/dynapi/SDL_dynapi.h
++++ b/src/dynapi/SDL_dynapi.h
+@@ -67,6 +67,8 @@
+ #define SDL_DYNAMIC_API 0 /* The N-Gage doesn't support dynamic linking either */
+ #elif defined(SDL_PLATFORM_3DS)
+ #define SDL_DYNAMIC_API 0 /* devkitARM doesn't support dynamic linking */
++#elif defined(_WIN32_WCE)
++#define SDL_DYNAMIC_API 0
+ #elif defined(DYNAPI_NEEDS_DLOPEN) && !defined(HAVE_DLOPEN)
+ #define SDL_DYNAMIC_API 0 /* we need dlopen(), but don't have it.... */
+ #endif
+--- a/src/sdl2_compat.c
++++ b/src/sdl2_compat.c
+@@ -73,7 +73,7 @@
+ #include <stdint.h>
+ #endif
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) || defined(_WIN32_WCE)
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN 1
+ #endif
+@@ -348,7 +348,10 @@
+ /* this talks right to the OS environment table. Don't use SDL3_setenv at startup. */
+ static void SDL2Compat_SetEnvAtStartup(const char *name, const char *value)
+ {
+-    #ifdef SDL_PLATFORM_WINDOWS
++    #if defined(_WIN32_WCE)
++    (void)name;
++    (void)value;
++    #elif defined(SDL_PLATFORM_WINDOWS)
+     SetEnvironmentVariableA(name, value);
+     #else  /* we might need other platforms, or a simple `return;` for platforms without an environment table. */
+     if (value) {
+@@ -362,7 +365,10 @@
+ /* this talks right to the OS environment table. Don't use SDL3_getenv at startup. */
+ static const char *SDL2Compat_GetEnvAtStartup(const char *name)
+ {
+-    #ifdef SDL_PLATFORM_WINDOWS
++    #if defined(_WIN32_WCE)
++    (void)name;
++    return NULL;
++    #elif defined(SDL_PLATFORM_WINDOWS)
+     static char buf[256];  /* overflows will just report as environment variable being unset. But most of our environment vars don't come through here. */
+     const DWORD rc = GetEnvironmentVariableA(name, buf, (DWORD) sizeof (buf));
+     return ((rc != 0) && (rc < sizeof (buf))) ? buf : NULL;
+@@ -386,10 +392,39 @@
+ /* Obviously we can't use SDL_LoadObject() to load SDL3.  :)  */
+ /* FIXME: Updated library names after https://github.com/libsdl-org/SDL/issues/5626 solidifies.  */
+ static char loaderror[256];
+-#if defined(_WIN32)
++#if defined(_WIN32_WCE)
+     static HMODULE Loaded_SDL3 = NULL;
++    static DWORD load_error = 0;
+     #define DIRSEP "\\"
+     #define SDL3_LIBNAME "SDL3.dll"
++    static bool LoadSDL3Library(void) {
++        WCHAR path[MAX_PATH];
++        DWORD length = GetModuleFileNameW(NULL, path, MAX_PATH);
++        while (length > 0 && path[length - 1] != L'\\') {
++            length--;
++        }
++        if (length + 9 < MAX_PATH) {
++            const WCHAR *name = L"SDL3.dll";
++            DWORD index;
++            for (index = 0; index < 9; index++) {
++                path[length + index] = name[index];
++            }
++            Loaded_SDL3 = LoadLibraryW(path);
++        }
++        if (!Loaded_SDL3) {
++            Loaded_SDL3 = LoadLibraryW(L"SDL3.dll");
++        }
++        if (!Loaded_SDL3) {
++            load_error = GetLastError();
++        }
++        return Loaded_SDL3 != NULL;
++    }
++    #define LookupSDL3Sym(sym) (void *)GetProcAddressA(Loaded_SDL3, sym)
++    #define CloseSDL3Library() { if (Loaded_SDL3) { FreeLibrary(Loaded_SDL3); Loaded_SDL3 = NULL; } }
++#elif defined(_WIN32)
++    static HMODULE Loaded_SDL3 = NULL;
++    #define DIRSEP "\\"
++    #define SDL3_LIBNAME "SDL3.dll"
+     #define LoadSDL3Library() ((Loaded_SDL3 = LoadLibraryA(SDL3_LIBNAME)) != NULL)
+     #define LookupSDL3Sym(sym) (void *)GetProcAddress(Loaded_SDL3, sym)
+     #define CloseSDL3Library() { if (Loaded_SDL3) { FreeLibrary(Loaded_SDL3); Loaded_SDL3 = NULL; } }
+@@ -629,6 +664,15 @@
+         }
+     }
+ }
++#elif defined(_WIN32_WCE)
++static void OS_GetExeName(char *buf, const unsigned maxpath, bool *use_base_path)
++{
++    WCHAR path[MAX_PATH];
++    buf[0] = '\0';
++    if (GetModuleFileNameW(NULL, path, MAX_PATH)) {
++        WideCharToMultiByte(CP_UTF8, 0, path, -1, buf, (int)maxpath, NULL, NULL);
++    }
++}
+ #elif defined(_WIN32)
+ static void OS_GetExeName(char *buf, const unsigned maxpath, bool *use_base_path)
+ {
+@@ -1175,9 +1219,20 @@
+ }
+ #endif
+ 
+-#if defined(_WIN32)
++#if defined(_WIN32_WCE)
++#include <stdio.h>
+ static void error_dialog(const char *errorMsg)
+ {
++    WCHAR message[256];
++
++    fprintf(stderr, "sdl2-compat: %s (error %lu)\n", errorMsg, (unsigned long)load_error);
++    fflush(stderr);
++    MultiByteToWideChar(CP_UTF8, 0, errorMsg, -1, message, 256);
++    MessageBoxW(NULL, message, L"Error", MB_OK | MB_SETFOREGROUND | MB_ICONSTOP);
++}
++#elif defined(_WIN32)
++static void error_dialog(const char *errorMsg)
++{
+     MessageBoxA(NULL, errorMsg, "Error", MB_OK | MB_SETFOREGROUND | MB_ICONSTOP);
+ }
+ #elif defined(__APPLE__)
+@@ -1194,7 +1249,16 @@
+ }
+ #endif
+ 
+-#if defined(__GNUC__) && !defined(_WIN32)
++#if defined(_WIN32_WCE)
++void SDL2Compat_InitWinCE(void) __attribute__((constructor(101)));
++void SDL2Compat_InitWinCE(void)
++{
++    if (!LoadSDL3()) {
++        error_dialog(loaderror);
++        TerminateProcess(GetCurrentProcess(), 42);
++    }
++}
++#elif defined(__GNUC__) && !defined(_WIN32)
+ static void dllinit(void) __attribute__((constructor));
+ static void dllinit(void)
+ {
+@@ -8257,6 +8321,42 @@
+ {
+     const float fvolume = volume / SDL2_MIX_MAXVOLUME;
+ 
++#ifdef _WIN32_WCE
++    if (volume == 0) {
++        return;
++    }
++    if (format == 0x8010) {
++        Uint32 index;
++        for (index = 0; index + 1 < len; index += 2) {
++            int mixed = (Sint16)(dst[index] | (dst[index + 1] << 8)) + (((Sint16)(src[index] | (src[index + 1] << 8)) * volume) / 128);
++            if (mixed > 32767) {
++                mixed = 32767;
++            } else if (mixed < -32768) {
++                mixed = -32768;
++            }
++            dst[index] = (Uint8)mixed;
++            dst[index + 1] = (Uint8)(mixed >> 8);
++        }
++        return;
++    }
++    if (format == 0x0008 || format == 0x8008) {
++        const int bias = (format == 0x0008) ? 128 : 0;
++        Uint32 index;
++        for (index = 0; index < len; index++) {
++            int base = (format == 0x0008) ? (int)dst[index] - bias : (int)(Sint8)dst[index];
++            int sample = (format == 0x0008) ? (int)src[index] - bias : (int)(Sint8)src[index];
++            int mixed = base + (sample * volume) / 128;
++            if (mixed > 127) {
++                mixed = 127;
++            } else if (mixed < -128) {
++                mixed = -128;
++            }
++            dst[index] = (Uint8)(mixed + bias);
++        }
++        return;
++    }
++#endif
++
+     /* SDL3 removed U16 audio formats. Convert to S16SYS. */
+     if ((format == SDL2_AUDIO_U16LSB) || (format == SDL2_AUDIO_U16MSB)) {
+         const Uint32 tmpsamples = len / sizeof (Uint16);
+@@ -10478,7 +10578,9 @@
+     SDL2_Surface *surface2 = NULL;
+     if (surface) {
+         surface2 = (SDL2_Surface *)SDL3_GetPointerProperty(SDL3_GetSurfaceProperties(surface), PROP_SURFACE2, NULL);
+-        if (!surface2) {
++        if (surface2) {
++            SynchronizeSurface3to2(surface, surface2);
++        } else {
+             /* See if we can reuse an existing surface */
+             surface2 = (SDL2_Surface *)SDL3_GetPointerProperty(SDL3_GetWindowProperties(window), PROP_SURFACE2, NULL);
+             if (surface2) {
+@@ -10506,7 +10608,36 @@
+     return surface2;
+ }
+ 
++static void SynchronizeWindowSurface(SDL_Window *window)
++{
++    SDL_Surface *surface = SDL3_GetWindowSurface(window);
++    SDL2_Surface *surface2;
++
++    if (surface) {
++        surface2 = (SDL2_Surface *)SDL3_GetPointerProperty(SDL3_GetSurfaceProperties(surface), PROP_SURFACE2, NULL);
++        if (surface2) {
++            SynchronizeSurface3to2(surface, surface2);
++        }
++    }
++}
++
+ SDL_DECLSPEC int SDLCALL
++SDL_UpdateWindowSurface(SDL_Window *window)
++{
++    int result = SDL3_UpdateWindowSurface(window) ? 0 : -1;
++    SynchronizeWindowSurface(window);
++    return result;
++}
++
++SDL_DECLSPEC int SDLCALL
++SDL_UpdateWindowSurfaceRects(SDL_Window *window, const SDL_Rect *rects, int numrects)
++{
++    int result = SDL3_UpdateWindowSurfaceRects(window, rects, numrects) ? 0 : -1;
++    SynchronizeWindowSurface(window);
++    return result;
++}
++
++SDL_DECLSPEC int SDLCALL
+ SDL_LockTextureToSurface(SDL_Texture *texture, const SDL_Rect *rect, SDL2_Surface **surface)
+ {
+     SDL_Surface *surface3 = NULL;
+@@ -11815,6 +11946,95 @@
+ #define RESAMPLER_BITS_PER_SAMPLE           16
+ #define RESAMPLER_SAMPLES_PER_ZERO_CROSSING (1 << ((RESAMPLER_BITS_PER_SAMPLE / 2) + 1))
+ 
++#ifdef _WIN32_WCE
++static int WinCE_ReadSample(const Uint8 *data, SDL2_AudioFormat format)
++{
++    if (format == 0x0008) {
++        return ((int)data[0] - 128) * 256;
++    }
++    if (format == 0x8008) {
++        return (int)(Sint8)data[0] * 256;
++    }
++    return (Sint16)(data[0] | (data[1] << 8));
++}
++
++static void WinCE_WriteSample(Uint8 *data, SDL2_AudioFormat format, int sample)
++{
++    if (format == 0x0008) {
++        data[0] = (Uint8)((sample >> 8) + 128);
++    } else if (format == 0x8008) {
++        data[0] = (Uint8)(Sint8)(sample >> 8);
++    } else {
++        data[0] = (Uint8)sample;
++        data[1] = (Uint8)(sample >> 8);
++    }
++}
++
++static bool WinCE_IntegerFormat(SDL2_AudioFormat format)
++{
++    return format == 0x0008 || format == 0x8008 || format == 0x8010;
++}
++
++static bool WinCE_IntegerConvert(SDL_AudioCVT *cvt, SDL2_AudioFormat src_format, int src_channels, int src_rate,
++                                 SDL2_AudioFormat dst_format, int dst_channels, int dst_rate)
++{
++    const int src_bytes = SDL_AUDIO_BITSIZE(src_format) / 8;
++    const int dst_bytes = SDL_AUDIO_BITSIZE(dst_format) / 8;
++    const int src_frame = src_bytes * src_channels;
++    const int dst_frame = dst_bytes * dst_channels;
++    const Uint8 *src;
++    Uint8 *output;
++    Uint32 step;
++    Uint64 position;
++    int src_frames, dst_frames, capacity, frame;
++
++    if (!WinCE_IntegerFormat(src_format) || !WinCE_IntegerFormat(dst_format) ||
++        src_channels < 1 || src_channels > 2 || dst_channels < 1 || dst_channels > 2) {
++        return false;
++    }
++
++    src_frames = cvt->len_cvt / src_frame;
++    capacity = (cvt->len * cvt->len_mult) / dst_frame;
++    dst_frames = (int)(((Uint64)src_frames * (Uint32)dst_rate) / (Uint32)src_rate);
++    if (dst_frames > capacity) {
++        dst_frames = capacity;
++    }
++    output = (Uint8 *)SDL3_malloc((size_t)dst_frames * dst_frame + 1);
++    if (!output) {
++        return false;
++    }
++
++    src = cvt->buf;
++    step = (Uint32)(((Uint64)src_rate << 16) / (Uint32)dst_rate);
++    position = 0;
++    for (frame = 0; frame < dst_frames; frame++) {
++        int index = (int)(position >> 16);
++        int fraction = (int)((position & 0xFFFF) >> 1);
++        int next = (index + 1 < src_frames) ? index + 1 : index;
++        int left0 = WinCE_ReadSample(src + index * src_frame, src_format);
++        int left1 = WinCE_ReadSample(src + next * src_frame, src_format);
++        int right0 = (src_channels == 2) ? WinCE_ReadSample(src + index * src_frame + src_bytes, src_format) : left0;
++        int right1 = (src_channels == 2) ? WinCE_ReadSample(src + next * src_frame + src_bytes, src_format) : left1;
++        int left = left0 + (((left1 - left0) * fraction) >> 15);
++        int right = right0 + (((right1 - right0) * fraction) >> 15);
++        Uint8 *out = output + frame * dst_frame;
++
++        if (dst_channels == 2) {
++            WinCE_WriteSample(out, dst_format, left);
++            WinCE_WriteSample(out + dst_bytes, dst_format, right);
++        } else {
++            WinCE_WriteSample(out, dst_format, (left + right) >> 1);
++        }
++        position += step;
++    }
++
++    SDL3_memcpy(cvt->buf, output, (size_t)dst_frames * dst_frame);
++    SDL3_free(output);
++    cvt->len_cvt = dst_frames * dst_frame;
++    return true;
++}
++#endif
++
+ static void SDLCALL AudioCVTFilter(SDL_AudioCVT *cvt, SDL2_AudioFormat src_format)
+ {
+     SDL2_AudioStream *stream2;
+@@ -11838,6 +12058,13 @@
+         dst_channels = ap.dst_channels;
+         dst_rate = ap.dst_rate;
+     }
++
++#ifdef _WIN32_WCE
++    if (WinCE_IntegerConvert(cvt, src_format, src_channels, src_rate, dst_format, dst_channels, dst_rate)) {
++        stream2 = NULL;
++        goto exit;
++    }
++#endif
+ 
+     /* don't use the SDL3 stream directly or even SDL_ConvertAudioSamples; we want the U16 support in the sdl2-compat layer */
+     stream2 = SDL_NewAudioStream(src_format, src_channels, src_rate,
+--- a/src/sdl3_include_wrapper.h
++++ b/src/sdl3_include_wrapper.h
+@@ -1364,7 +1364,7 @@
+ #include <SDL3/SDL_main.h>
+ #include <SDL3/SDL_vulkan.h>
+ 
+-#if defined(_WIN32)
++#if defined(_WIN32) || defined(_WIN32_WCE)
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN 1
+ #endif
+@@ -1376,6 +1376,7 @@
+ #undef CreateMutex
+ #undef GetEnvironmentVariable
+ #undef SetEnvironmentVariable
++#undef wcsdup
+ #endif /* _WIN32 */
+ 
+ 
+--- a/src/sdl3_syms.h
++++ b/src/sdl3_syms.h
+@@ -705,8 +705,8 @@
+ SDL3_SYM(bool,UpdateHapticEffect,(SDL_Haptic *a, int b, const SDL_HapticEffect *c),(a,b,c),return)
+ SDL3_SYM_PASSTHROUGH_RETCODE(bool,UpdateNVTexture,(SDL_Texture *a, const SDL_Rect *b, const Uint8 *c, int d, const Uint8 *e, int f),(a,b,c,d,e,f),return)
+ SDL3_SYM_PASSTHROUGH_RETCODE(bool,UpdateTexture,(SDL_Texture *a, const SDL_Rect *b, const void *c, int d),(a,b,c,d),return)
+-SDL3_SYM_PASSTHROUGH_RETCODE(bool,UpdateWindowSurface,(SDL_Window *a),(a),return)
+-SDL3_SYM_PASSTHROUGH_RETCODE(bool,UpdateWindowSurfaceRects,(SDL_Window *a, const SDL_Rect *b, int c),(a,b,c),return)
++SDL3_SYM(bool,UpdateWindowSurface,(SDL_Window *a),(a),return)
++SDL3_SYM(bool,UpdateWindowSurfaceRects,(SDL_Window *a, const SDL_Rect *b, int c),(a,b,c),return)
+ SDL3_SYM_PASSTHROUGH_RETCODE(bool,UpdateYUVTexture,(SDL_Texture *a, const SDL_Rect *b, const Uint8 *c, int d, const Uint8 *e, int f, const Uint8 *g, int h),(a,b,c,d,e,f,g,h),return)
+ SDL3_SYM(bool,Vulkan_CreateSurface,(SDL_Window *a, VkInstance b, const struct VkAllocationCallbacks *c, VkSurfaceKHR *d),(a,b,c,d),return)
+ SDL3_SYM(char const* const* ,Vulkan_GetInstanceExtensions,(Uint32 *a),(a),return)

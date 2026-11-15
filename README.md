@@ -59,7 +59,7 @@ cmake --build build
 python3 "$GRIMACE/tests/check-imports.py" --arch arm --version 6 --platform brain build
 ```
 
-Tested with grimace `712288e` and its LLVM release `v5`; CI (`.github/workflows/build.yml`) builds against the same. SDL is built for ARMv5TE (ARM926EJ-S).
+Tested with grimace `7a5bdf4` and its LLVM release `v5`; CI (`.github/workflows/build.yml`) builds against the same. SDL is built for ARMv5TE (ARM926EJ-S).
 
 | Target | Output | Use |
 | --- | --- | --- |
